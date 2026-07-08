@@ -3,9 +3,11 @@ package modbus
 import (
 	"context"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"net/netip"
+	"strings"
 	"time"
 )
 
@@ -71,15 +73,29 @@ func ConnectTCP(ctx context.Context, addr string, slave_id uint8, start_register
 		case <-ctx.Done():
 			return nil
 		case <-timer.C:
+			fmt.Print("\033c")
+			fmt.Printf("Connection\t: %s\tStart Register\t: %d\n", addr, start_register)
+			fmt.Printf("Device ID\t: %d\t\t\tCount\t\t: %d\n", slave_id, qty)
+			fmt.Printf("Function Code\t: 0x03 (READ_MULTIPLE_HOLDING_REGISTERS)\n")
 			result, err := ReadHoldingRegistersTCP(conn, tx_id, slave_id, start_register, qty)
 			if err != nil {
 				fmt.Printf("[ERROR] %v\n", err)
 			} else {
 				for idx := range qty {
-					fmt.Printf("%d: %v\n", idx, result[int(idx)])
+					register := start_register + int(idx)
+					var bytes strings.Builder
+					for idx, val := range hex.EncodeToString(result[register]) {
+						if idx != 0 && idx%2 == 0 {
+							bytes.WriteRune(' ')
+						}
+						bytes.WriteRune(val)
+					}
+
+					fmt.Printf("%d: %5d [%s]\n", register, binary.BigEndian.Uint16(result[register]), bytes.String())
 				}
 			}
 			tx_id++
+			timer.Reset(time.Second)
 		}
 	}
 }
@@ -107,7 +123,7 @@ func ReadHoldingRegistersTCP(conn net.Conn, tx_id uint16, slave_id uint8, start_
 
 	var result = make(map[int][]byte, qty)
 	for idx := range qty {
-		result[start_addr+int(idx)] = response[(10 + (idx * 2)):][:2]
+		result[start_addr+int(idx)] = response[(9 + (idx * 2)):][:2]
 	}
 
 	return result, nil
