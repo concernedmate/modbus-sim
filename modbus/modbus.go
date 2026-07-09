@@ -7,16 +7,17 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"strconv"
 	"strings"
 	"time"
 )
 
 // function codes
 const (
-	READ_COIL                       = 0x01
-	READ_DISCRETE_INPUT             = 0x02
-	READ_MULTIPLE_HOLDING_REGISTERS = 0x03
-	READ_INPUT_REGISTERS            = 0x04
+	READ_COIL              = 0x01
+	READ_DISCRETE_INPUT    = 0x02
+	READ_HOLDING_REGISTERS = 0x03
+	READ_INPUT_REGISTERS   = 0x04
 
 	WRITE_SINGLE_COIL                = 0x05
 	WRITE_SINGLE_HOLDING_REGISTERS   = 0x06
@@ -51,21 +52,35 @@ var modbus_exception = map[int]string{
 	ERR_GATEWAY_TARGET_DEVICE_FAILED_TO_RESPOND: "GATEWAY_TARGET_DEVICE_FAILED_TO_RESPOND",
 }
 
-func ConnectTCP(ctx context.Context, addr string, slave_id uint8, start_register int, qty uint16) error {
+func ConnectTCP(ctx context.Context, function byte, addr string, slave_id uint8, start_register int, qty uint16) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	_, err := netip.ParseAddrPort(addr)
 	if err != nil {
 		return fmt.Errorf("failed to parse address: %v", err)
 	}
+	register_addr, err := ParseRegisterAddr(start_register)
+	if err != nil {
+		return fmt.Errorf("failed to parse register: %v", err)
+	}
 
-	conn, err := net.Dial("tcp", addr)
+	dialer := net.Dialer{
+		KeepAliveConfig: net.KeepAliveConfig{
+			Enable:   true,
+			Idle:     1,
+			Interval: 1,
+			Count:    1,
+		},
+	}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to connect: %v", err)
 	}
 	defer conn.Close()
 
 	var tx_id uint16
-
-	timer := time.NewTimer(time.Second)
+	var timer = time.NewTimer(time.Second)
 	defer timer.Stop()
 
 	for {
@@ -76,48 +91,79 @@ func ConnectTCP(ctx context.Context, addr string, slave_id uint8, start_register
 			fmt.Print("\033c")
 			fmt.Printf("Connection\t: %s\tStart Register\t: %d\n", addr, start_register)
 			fmt.Printf("Device ID\t: %d\t\t\tCount\t\t: %d\n", slave_id, qty)
-			fmt.Printf("Function Code\t: 0x03 (READ_MULTIPLE_HOLDING_REGISTERS)\n")
-			result, err := ReadHoldingRegistersTCP(conn, tx_id, slave_id, start_register, qty)
+			fmt.Printf("Function Code\t: 0x%02d\n", function)
+
+			var request []byte
+			switch function {
+			case READ_COIL:
+				request = FrameFC01TCP(tx_id, slave_id, register_addr, qty)
+			case READ_HOLDING_REGISTERS:
+				request = FrameFC03TCP(tx_id, slave_id, register_addr, qty)
+			}
+			if _, err := conn.Write(request); err != nil {
+				return err
+			}
+			// 7 tcp header, 2 modbus header, 2 bytes per register
+			var response = make([]byte, 7+2+(2*qty))
+			if _, err := conn.Read(response); err != nil {
+				return err
+			}
+			if tx_id != binary.BigEndian.Uint16(response[0:2]) {
+				return fmt.Errorf("difference in tx_id %d, got %d", tx_id, binary.BigEndian.Uint16(response[0:2]))
+			}
+
+			var result map[int][]byte
+			switch function {
+			case READ_COIL:
+				result, err = ParseResponseFC01TCP(response, start_register, qty)
+			case READ_HOLDING_REGISTERS:
+				result, err = ParseResponseFC03TCP(response, start_register, qty)
+			}
 			if err != nil {
 				fmt.Printf("[ERROR] %v\n", err)
 			} else {
 				for idx := range qty {
 					register := start_register + int(idx)
-					var bytes strings.Builder
-					for idx, val := range hex.EncodeToString(result[register]) {
-						if idx != 0 && idx%2 == 0 {
-							bytes.WriteRune(' ')
-						}
-						bytes.WriteRune(val)
-					}
+					switch function {
+					case READ_COIL:
+						fmt.Printf("%d: %t\n", register, result[register][0] == 1)
+					case READ_HOLDING_REGISTERS:
 
-					fmt.Printf("%d: %5d [%s]\n", register, binary.BigEndian.Uint16(result[register]), bytes.String())
+						var bytes strings.Builder
+						for idx, val := range hex.EncodeToString(result[register]) {
+							if idx != 0 && idx%2 == 0 {
+								bytes.WriteRune(' ')
+							}
+							bytes.WriteRune(val)
+						}
+
+						fmt.Printf("%d: %5d [%s]\n", register, binary.BigEndian.Uint16(result[register]), bytes.String())
+					}
 				}
 			}
+
 			tx_id++
 			timer.Reset(time.Second)
 		}
 	}
 }
 
-func ReadHoldingRegistersTCP(conn net.Conn, tx_id uint16, slave_id uint8, start_addr int, qty uint16) (map[int][]byte, error) {
-	request := FrameFC03TCP(tx_id, slave_id, ConvertRegisterAddr(start_addr), qty)
-	if _, err := conn.Write(request); err != nil {
-		return nil, err
+func ParseResponseFC01TCP(response []byte, start_addr int, qty uint16) (map[int][]byte, error) {
+	if READ_COIL != response[7] {
+		return nil, fmt.Errorf("exception: %s", modbus_exception[int(response[8])])
+	}
+	data := response[9:]
+
+	var result = make(map[int][]byte, qty)
+	for idx := range qty {
+		result[start_addr+int(idx)] = []byte{(data[idx/8] >> (idx % 8)) & 1}
 	}
 
-	// 7 tcp header, 2 modbus header, 2 bytes per register
-	var response = make([]byte, 7+2+(2*qty))
-	if _, err := conn.Read(response); err != nil {
-		return nil, err
-	}
-	if tx_id != binary.BigEndian.Uint16(response[0:2]) {
-		return nil, fmt.Errorf("difference in tx_id %d, got %d", tx_id, binary.BigEndian.Uint16(response[0:2]))
-	}
-	if slave_id != response[6] {
-		return nil, fmt.Errorf("difference in slave_id %d, got %d", slave_id, response[6])
-	}
-	if READ_MULTIPLE_HOLDING_REGISTERS != response[7] {
+	return result, nil
+}
+
+func ParseResponseFC03TCP(response []byte, start_addr int, qty uint16) (map[int][]byte, error) {
+	if READ_HOLDING_REGISTERS != response[7] {
 		return nil, fmt.Errorf("exception: %s", modbus_exception[int(response[8])])
 	}
 
@@ -129,38 +175,85 @@ func ReadHoldingRegistersTCP(conn net.Conn, tx_id uint16, slave_id uint8, start_
 	return result, nil
 }
 
-// FrameFC03TCP returns modbus tcp frame for READ_MULTIPLE_HOLDING_REGISTERS
+// FrameFC01TCP returns modbus tcp frame for READ_COIL
+func FrameFC01TCP(tx_id uint16, slave_id uint8, start_addr uint16, qty uint16) []byte {
+	req := make([]byte, 12)
+	binary.BigEndian.PutUint16(req[0:], tx_id)  // transaction_id
+	binary.BigEndian.PutUint16(req[2:], 0x0000) // protocol_id
+	binary.BigEndian.PutUint16(req[4:], 6)      // length
+	req[6] = slave_id
+	req[7] = READ_COIL
+	binary.BigEndian.PutUint16(req[8:], start_addr)
+	binary.BigEndian.PutUint16(req[10:], qty)
+	return req
+}
+
+// FrameFC03TCP returns modbus tcp frame for READ_HOLDING_REGISTERS
 func FrameFC03TCP(tx_id uint16, slave_id uint8, start_addr uint16, qty uint16) []byte {
 	req := make([]byte, 12)
 	binary.BigEndian.PutUint16(req[0:], tx_id)  // transaction_id
 	binary.BigEndian.PutUint16(req[2:], 0x0000) // protocol_id
 	binary.BigEndian.PutUint16(req[4:], 6)      // length
 	req[6] = slave_id
-	req[7] = READ_MULTIPLE_HOLDING_REGISTERS
+	req[7] = READ_HOLDING_REGISTERS
 	binary.BigEndian.PutUint16(req[8:], start_addr)
 	binary.BigEndian.PutUint16(req[10:], qty)
 	return req
 }
 
-// FrameFC03RTU returns modbus rtu frame for READ_MULTIPLE_HOLDING_REGISTERS
-func FrameFC03RTU(slave_id uint8, start_addr, qty uint16) []byte {
+// FrameFC01RTU returns modbus rtu frame for READ_COIL
+func FrameFC01RTU(slave_id uint8, start_addr, qty uint16) []byte {
 	req := make([]byte, 8)
 	req[0] = slave_id
-	req[1] = READ_MULTIPLE_HOLDING_REGISTERS
+	req[1] = READ_COIL
 	binary.BigEndian.PutUint16(req[2:4], start_addr)
 	binary.BigEndian.PutUint16(req[4:6], qty)
 	binary.LittleEndian.PutUint16(req[6:8], calculateCRCFast(req[:6]))
 	return req
 }
 
-// ConvertRegisterAddr converts documentation notation 4xxxx/4xxxxxx address to 0 indexed protocol address
-func ConvertRegisterAddr(addr int) uint16 {
-	if addr > 4_00000 && addr <= 4_65536 {
-		return uint16(addr - 4_00001)
-	} else if addr > 4_0000 {
-		return uint16(addr - 4_0001)
+// FrameFC03RTU returns modbus rtu frame for READ_HOLDING_REGISTERS
+func FrameFC03RTU(slave_id uint8, start_addr, qty uint16) []byte {
+	req := make([]byte, 8)
+	req[0] = slave_id
+	req[1] = READ_HOLDING_REGISTERS
+	binary.BigEndian.PutUint16(req[2:4], start_addr)
+	binary.BigEndian.PutUint16(req[4:6], qty)
+	binary.LittleEndian.PutUint16(req[6:8], calculateCRCFast(req[:6]))
+	return req
+}
+
+// ParseRegisterAddr converts documentation notation (0/1/3/4)xxxxxx address to 0 indexed protocol address
+func ParseRegisterAddr(addr int) (uint16, error) {
+	if addr < 1 {
+		return 0, fmt.Errorf("register address be atleast 1")
 	}
-	panic("register address should be 400000-465536 or 40000-49999")
+	conv := strconv.Itoa(addr)
+	if conv[0] != '0' && conv[0] != '1' && conv[0] != '3' && conv[0] != '4' {
+		return 0, fmt.Errorf("invalid register address")
+	}
+
+	if len(conv) == 6 {
+		tmp, err := strconv.Atoi(conv[1:])
+		if err != nil {
+			return 0, err
+		}
+		if tmp > 65536 {
+			return 0, fmt.Errorf("value must be %c00000-%c65536", conv[0], conv[0])
+		}
+		return uint16(tmp - 1), nil
+	} else if len(conv) == 5 {
+		tmp, err := strconv.Atoi(conv[1:])
+		if err != nil {
+			return 0, err
+		}
+		if tmp > 9999 {
+			return 0, fmt.Errorf("value must be %c0000-%c9999", conv[0], conv[0])
+		}
+		return uint16(tmp - 1), nil
+	} else {
+		return uint16(addr - 1), nil
+	}
 }
 
 // Fast MODBUS CRC 16-bit algorithm in Golang.
