@@ -58,16 +58,16 @@ func handleConnection(conn *net.TCPConn, devices map[int]*Device) {
 	}()
 	_ = conn.SetKeepAlive(true)
 
+	var read = make([]byte, 255)
 	for {
-		var request = make([]byte, 255)
-		n, err := conn.Read(request)
+		n, err := conn.Read(read)
 		if err != nil {
 			break
 		}
-		request = request[:n]
+		request := read[:n]
 
 		if len(request) < 8 {
-			response := append(request[0:8], ERR_ILLEGAL_FUNCTION)
+			response := append(request[0:8], ERR_SLAVE_DEVICE_FAILURE)
 			response[7] += 0x80
 			_, err := conn.Write(response)
 			if err != nil {
@@ -109,8 +109,8 @@ func handleConnection(conn *net.TCPConn, devices map[int]*Device) {
 				start_addr := binary.BigEndian.Uint16(request[8:10])
 				qty := binary.BigEndian.Uint16(request[10:12])
 				max_addr := int(start_addr) + int(qty) - 1 // we -1 because register is 1-indexing but go is 0-indexing
-				if len(device.holding_registers) < max_addr {
-					response := append(request[0:8], ERR_ILLEGAL_DATA_ADDRESS)
+				if len(device.holding_registers) <= max_addr {
+					response := append(request[0:8], ERR_ILLEGAL_DATA_VALUE)
 					response[7] += 0x80
 					_, err := conn.Write(response)
 					if err != nil {

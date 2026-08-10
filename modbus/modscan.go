@@ -121,7 +121,6 @@ func ParseResponseFC01TCP(response []byte, start_addr int, qty uint16) (map[int]
 
 	return result, nil
 }
-
 func ParseResponseFC03TCP(response []byte, start_addr int, qty uint16) (map[int][]byte, error) {
 	if READ_HOLDING_REGISTERS != response[7] {
 		return nil, fmt.Errorf("exception: %s", modbus_exception[int(response[8])])
@@ -135,7 +134,6 @@ func ParseResponseFC03TCP(response []byte, start_addr int, qty uint16) (map[int]
 	return result, nil
 }
 
-// FrameFC01TCP returns modbus tcp frame for READ_COIL
 func FrameFC01TCP(tx_id uint16, slave_id uint8, start_addr uint16, qty uint16) []byte {
 	req := make([]byte, 12)
 	binary.BigEndian.PutUint16(req[0:], tx_id)  // transaction_id
@@ -147,8 +145,6 @@ func FrameFC01TCP(tx_id uint16, slave_id uint8, start_addr uint16, qty uint16) [
 	binary.BigEndian.PutUint16(req[10:], qty)
 	return req
 }
-
-// FrameFC03TCP returns modbus tcp frame for READ_HOLDING_REGISTERS
 func FrameFC03TCP(tx_id uint16, slave_id uint8, start_addr uint16, qty uint16) []byte {
 	req := make([]byte, 12)
 	binary.BigEndian.PutUint16(req[0:], tx_id)  // transaction_id
@@ -160,8 +156,6 @@ func FrameFC03TCP(tx_id uint16, slave_id uint8, start_addr uint16, qty uint16) [
 	binary.BigEndian.PutUint16(req[10:], qty)
 	return req
 }
-
-// FrameFC01RTU returns modbus rtu frame for READ_COIL
 func FrameFC01RTU(slave_id uint8, start_addr, qty uint16) []byte {
 	req := make([]byte, 8)
 	req[0] = slave_id
@@ -171,8 +165,6 @@ func FrameFC01RTU(slave_id uint8, start_addr, qty uint16) []byte {
 	binary.LittleEndian.PutUint16(req[6:8], calculateCRCFast(req[:6]))
 	return req
 }
-
-// FrameFC03RTU returns modbus rtu frame for READ_HOLDING_REGISTERS
 func FrameFC03RTU(slave_id uint8, start_addr, qty uint16) []byte {
 	req := make([]byte, 8)
 	req[0] = slave_id
@@ -186,11 +178,11 @@ func FrameFC03RTU(slave_id uint8, start_addr, qty uint16) []byte {
 // ParseRegisterAddr converts documentation notation (0/1/3/4)xxxxxx address to 0 indexed protocol address
 func ParseRegisterAddr(addr int) (uint16, error) {
 	if addr < 1 {
-		return 0, fmt.Errorf("register address be atleast 1")
+		return 0, fmt.Errorf("invalid register address, e.q 40001-49999 or 400001-465536")
 	}
 	conv := strconv.Itoa(addr)
 	if conv[0] != '0' && conv[0] != '1' && conv[0] != '3' && conv[0] != '4' {
-		return 0, fmt.Errorf("invalid register address")
+		return 0, fmt.Errorf("invalid register address, e.q 40001-49999 or 400001-465536")
 	}
 
 	if len(conv) == 6 {
@@ -212,7 +204,7 @@ func ParseRegisterAddr(addr int) (uint16, error) {
 		}
 		return uint16(tmp - 1), nil
 	} else {
-		return uint16(addr - 1), nil
+		return 0, fmt.Errorf("invalid register address, e.q 40001-49999 or 400001-465536")
 	}
 }
 
