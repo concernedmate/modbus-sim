@@ -18,7 +18,7 @@ func Test_FrameFC03TCP(t *testing.T) {
 		t.Errorf("expected %d, got %d", 107, register)
 	}
 
-	result := modbus.FrameFC03TCP(1, 17, register, 3)
+	result := modbus.RequestFrameFC03TCP(1, 17, register, 3)
 	if hex.EncodeToString(result) != "0001000000061103006b0003" {
 		t.Errorf("expected %s, got %s", "0001000000061103006b0003", hex.EncodeToString(result))
 	}
@@ -95,7 +95,7 @@ func Test_FrameFC03RTU(t *testing.T) {
 		t.Errorf("expected %d, got %d", 107, register)
 	}
 
-	result := modbus.FrameFC03RTU(17, register, 3)
+	result := modbus.RequestFrameFC03RTU(17, register, 3)
 	if hex.EncodeToString(result) != "1103006b00037687" {
 		t.Errorf("expected %s, got %s", "1103006b00037687", hex.EncodeToString(result))
 	}

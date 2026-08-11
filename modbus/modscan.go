@@ -56,9 +56,9 @@ func ConnectTCP(ctx context.Context, function byte, addr string, slave_id uint8,
 			var request []byte
 			switch function {
 			case READ_COIL:
-				request = FrameFC01TCP(tx_id, slave_id, register_addr, qty)
+				request = RequestFrameFC01TCP(tx_id, slave_id, register_addr, qty)
 			case READ_HOLDING_REGISTERS:
-				request = FrameFC03TCP(tx_id, slave_id, register_addr, qty)
+				request = RequestFrameFC03TCP(tx_id, slave_id, register_addr, qty)
 			}
 			if _, err := conn.Write(request); err != nil {
 				return err
@@ -134,7 +134,7 @@ func ParseResponseFC03TCP(response []byte, start_addr int, qty uint16) (map[int]
 	return result, nil
 }
 
-func FrameFC01TCP(tx_id uint16, slave_id uint8, start_addr uint16, qty uint16) []byte {
+func RequestFrameFC01TCP(tx_id uint16, slave_id uint8, start_addr uint16, qty uint16) []byte {
 	req := make([]byte, 12)
 	binary.BigEndian.PutUint16(req[0:], tx_id)  // transaction_id
 	binary.BigEndian.PutUint16(req[2:], 0x0000) // protocol_id
@@ -145,7 +145,7 @@ func FrameFC01TCP(tx_id uint16, slave_id uint8, start_addr uint16, qty uint16) [
 	binary.BigEndian.PutUint16(req[10:], qty)
 	return req
 }
-func FrameFC03TCP(tx_id uint16, slave_id uint8, start_addr uint16, qty uint16) []byte {
+func RequestFrameFC03TCP(tx_id uint16, slave_id uint8, start_addr uint16, qty uint16) []byte {
 	req := make([]byte, 12)
 	binary.BigEndian.PutUint16(req[0:], tx_id)  // transaction_id
 	binary.BigEndian.PutUint16(req[2:], 0x0000) // protocol_id
@@ -156,7 +156,7 @@ func FrameFC03TCP(tx_id uint16, slave_id uint8, start_addr uint16, qty uint16) [
 	binary.BigEndian.PutUint16(req[10:], qty)
 	return req
 }
-func FrameFC01RTU(slave_id uint8, start_addr, qty uint16) []byte {
+func RequestFrameFC01RTU(slave_id uint8, start_addr, qty uint16) []byte {
 	req := make([]byte, 8)
 	req[0] = slave_id
 	req[1] = READ_COIL
@@ -165,7 +165,7 @@ func FrameFC01RTU(slave_id uint8, start_addr, qty uint16) []byte {
 	binary.LittleEndian.PutUint16(req[6:8], calculateCRCFast(req[:6]))
 	return req
 }
-func FrameFC03RTU(slave_id uint8, start_addr, qty uint16) []byte {
+func RequestFrameFC03RTU(slave_id uint8, start_addr, qty uint16) []byte {
 	req := make([]byte, 8)
 	req[0] = slave_id
 	req[1] = READ_HOLDING_REGISTERS
