@@ -1,6 +1,7 @@
 package modbus
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"net"
@@ -11,17 +12,26 @@ import (
 // https://www.modbus.org/file/secure/messagingimplementationguide.pdf
 
 type Device struct {
-	mutex             sync.Mutex
-	holding_registers []uint16
-	coil_registers    []bool
+	mutex sync.Mutex
+
+	SlaveID          int
+	HoldingRegisters []uint16
+	CoilRegisters    []bool
 }
 
-func ServeTCP(addr string) error {
-	devices := map[int]*Device{}
-	devices[1] = &Device{
-		mutex:             sync.Mutex{},
-		holding_registers: []uint16{128, 255, 65535},
-		coil_registers:    []bool{},
+func NewModbusDevice(slave_id int, holding_registers []uint16, coil_registers []bool) Device {
+	return Device{
+		mutex:            sync.Mutex{},
+		SlaveID:          slave_id,
+		HoldingRegisters: holding_registers,
+		CoilRegisters:    coil_registers,
+	}
+}
+
+func ServeTCP(ctx context.Context, addr string, devices []Device) error {
+	mapped := make(map[int]*Device, len(devices))
+	for idx := range devices {
+		mapped[devices[idx].SlaveID] = &devices[idx]
 	}
 
 	_, err := netip.ParseAddrPort(addr)
@@ -32,8 +42,11 @@ func ServeTCP(addr string) error {
 	if err != nil {
 		return fmt.Errorf("failed to start tcp server: %v", err)
 	}
-	defer listener.Close()
 
+	go func() {
+		<-ctx.Done()
+		listener.Close()
+	}()
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -47,7 +60,7 @@ func ServeTCP(addr string) error {
 			continue
 		}
 
-		go handleConnection(tcp_conn, devices)
+		go handleConnection(tcp_conn, mapped)
 	}
 }
 
@@ -117,7 +130,7 @@ func ResponseFC03TCP(request []byte, devices map[int]*Device) []byte {
 	start_addr := binary.BigEndian.Uint16(request[8:10])
 	qty := binary.BigEndian.Uint16(request[10:12])
 	max_addr := start_addr + qty - 1 // we -1 because register is 1-indexing but go is 0-indexing
-	if len(device.holding_registers) <= int(max_addr) {
+	if len(device.HoldingRegisters) <= int(max_addr) {
 		response := append(request[0:8], ERR_ILLEGAL_DATA_VALUE)
 		response[7] += 0x80
 		return response
@@ -134,7 +147,7 @@ func ResponseFC03TCP(request []byte, devices map[int]*Device) []byte {
 	var idx uint16
 	for addr := start_addr; addr <= max_addr; addr++ {
 		idx = (addr - start_addr) * 2
-		binary.BigEndian.PutUint16(response[(9+idx):], device.holding_registers[addr])
+		binary.BigEndian.PutUint16(response[(9+idx):], device.HoldingRegisters[addr])
 	}
 
 	return response

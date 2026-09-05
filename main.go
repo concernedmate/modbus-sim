@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"log"
 	"modbus-sim/modbus"
+	"modbus-sim/window"
 	"os"
 	"strconv"
+
+	g "github.com/AllenDang/giu"
 )
 
 func args() {
@@ -21,7 +24,7 @@ func args() {
 	}
 	switch os.Args[1] {
 	case "modsim":
-		if err := modbus.ServeTCP("127.0.0.1:8000"); err != nil {
+		if err := modbus.ServeTCP(context.Background(), "127.0.0.1:8000", nil); err != nil {
 			log.Fatal(err)
 		}
 	case "modscan":
@@ -48,9 +51,31 @@ func args() {
 			log.Fatal(err)
 		}
 	}
-
 }
 
+type AppState struct {
+	windows []window.Window
+}
+
+var app_state AppState
+
+func init() {
+	app_state.windows = append(app_state.windows, new(window.Tes("tes1")))
+	app_state.windows = append(app_state.windows, new(window.Tes("tes2")))
+}
+func loop() {
+	g.SingleWindowWithMenuBar().Layout(
+		// menu bar
+		g.MenuBar().Layout(
+			g.MenuItem("File"),
+			g.MenuItem("About"),
+		),
+	)
+	for idx := range app_state.windows {
+		app_state.windows[idx].Build()
+	}
+}
 func main() {
-	args()
+	w := g.NewMasterWindow("Modbus Simulator", 800, 600, 0)
+	w.Run(loop)
 }
