@@ -12,6 +12,21 @@ import (
 	g "github.com/AllenDang/giu"
 )
 
+type AppState struct {
+	windows        []window.Window
+	is_about_shown bool
+}
+
+func (data *AppState) toggle_about() {
+	data.is_about_shown = !data.is_about_shown
+}
+
+var APP_STATE AppState
+
+func init() {
+	APP_STATE.windows = append(APP_STATE.windows, new(window.CreateWindowModscan("modbus scanner")))
+	APP_STATE.windows = append(APP_STATE.windows, new(window.CreateWindowModsim("modbus simulator")))
+}
 func args() {
 	if len(os.Args) < 2 {
 		fmt.Println("usage:")
@@ -53,29 +68,33 @@ func args() {
 	}
 }
 
-type AppState struct {
-	windows []window.Window
-}
-
-var app_state AppState
-
-func init() {
-	app_state.windows = append(app_state.windows, new(window.CreateWindowModscan("modbus scanner")))
-	app_state.windows = append(app_state.windows, new(window.CreateWindowModsim("modbus simulator")))
-}
 func loop() {
 	g.SingleWindowWithMenuBar().Layout(
 		// menu bar
 		g.MenuBar().Layout(
-			g.MenuItem("About"),
+			g.MenuItem("About").OnClick(APP_STATE.toggle_about),
 		),
 
 		g.Custom(func() {
-			for idx := range app_state.windows {
-				app_state.windows[idx].Build()
+			for idx := range APP_STATE.windows {
+				APP_STATE.windows[idx].Build()
 			}
 		}),
 	)
+	if APP_STATE.is_about_shown {
+		w, h := g.GetAvailableRegion()
+		g.Window("Modbus Simulator v0.0.1").Pos(w/2, h/2).Flags(
+			g.WindowFlagsNoDocking | g.WindowFlagsNoResize | g.WindowFlagsNoCollapse,
+		).Layout(
+			g.Align(g.AlignCenter).To(
+				g.Label("Giu (github.com/AllenDang/giu) by (Allen Dang)"),
+				g.Label("gopcua (github.com/gopcua/opcua) by (The gopcua authors)"),
+				g.Dummy(g.Auto, 32),
+				g.Label("made by concernedmate (github.com/concernedmate)"),
+				g.Button("CLOSE").OnClick(APP_STATE.toggle_about),
+			),
+		)
+	}
 }
 func main() {
 	w := g.NewMasterWindow("Modbus", 1280, 720, g.MasterWindowFlagsTransparent)

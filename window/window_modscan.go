@@ -112,7 +112,7 @@ func (window *WindowModscan) log(format string, a ...any) {
 	slices.Reverse(window.log_msg)
 }
 func (window *WindowModscan) Build() {
-	g.Window(window.title).Size(g.GetAvailableRegion()).Layout(
+	g.Window(window.title).Layout(
 		// config
 		g.Custom(func() {
 			selected_fc := window.modbus_function_code
