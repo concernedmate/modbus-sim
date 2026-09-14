@@ -62,7 +62,7 @@ func (window *WindowModsim) Build() {
 			g.Table().Rows(
 				g.TableRow(g.Label("Modsim Host"), g.InputText(&window.host)),
 				g.TableRow(g.Label("Modsim Devices"), g.Labelf("%d", len(window.devices))),
-			).Flags(g.TableFlagsNoClip + g.TableFlagsBorders).Build()
+			).Flags(g.TableFlagsNoClip | g.TableFlagsBorders).Build()
 		}),
 
 		// buttons

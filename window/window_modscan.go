@@ -115,13 +115,33 @@ func (window *WindowModscan) Build() {
 	g.Window(window.title).Size(g.GetAvailableRegion()).Layout(
 		// config
 		g.Custom(func() {
+			selected_fc := window.modbus_function_code
 			g.Table().Rows(
 				g.TableRow(g.Label("Modbus Host"), g.InputText(&window.modbus_host_addr)),
 				g.TableRow(g.Label("Slave ID"), g.InputInt(&window.modbus_slave_id)),
 				g.TableRow(g.Label("Start Register"), g.InputInt(&window.modbus_register)),
 				g.TableRow(g.Label("Read Quantity"), g.InputInt(&window.modbus_quantity)),
-				g.TableRow(g.Label("Function Code"), g.InputInt(&window.modbus_function_code)),
-			).Flags(g.TableFlagsNoClip + g.TableFlagsBorders).Build()
+				g.TableRow(g.Label("Function Code"),
+					g.Checkbox("READ_COIL", new(selected_fc == modbus.READ_COIL)).OnChange(
+						func() { window.modbus_function_code = modbus.READ_COIL },
+					),
+				),
+				g.TableRow(g.Dummy(0, 0),
+					g.Checkbox("READ_DISCRETE_INPUT", new(selected_fc == modbus.READ_DISCRETE_INPUT)).OnChange(
+						func() { window.modbus_function_code = modbus.READ_DISCRETE_INPUT },
+					),
+				),
+				g.TableRow(g.Dummy(0, 0),
+					g.Checkbox("READ_HOLDING_REGISTERS", new(selected_fc == modbus.READ_HOLDING_REGISTERS)).OnChange(
+						func() { window.modbus_function_code = modbus.READ_HOLDING_REGISTERS },
+					),
+				),
+				g.TableRow(g.Dummy(0, 0),
+					g.Checkbox("READ_INPUT_REGISTERS", new(selected_fc == modbus.READ_INPUT_REGISTERS)).OnChange(
+						func() { window.modbus_function_code = modbus.READ_INPUT_REGISTERS },
+					),
+				),
+			).Flags(g.TableFlagsNoClip | g.TableFlagsBorders).Build()
 		}),
 
 		// buttons

@@ -80,7 +80,6 @@ func ServeTCP(ctx context.Context, addr string, devices []Device) error {
 		go handleConnection(tcp_conn, mapped)
 	}
 }
-
 func handleConnection(conn *net.TCPConn, devices map[int]*Device) {
 	defer func() {
 		conn.Close()
@@ -122,7 +121,9 @@ func handleConnection(conn *net.TCPConn, devices map[int]*Device) {
 }
 
 func ResponseFC01TCP(request []byte, devices map[int]*Device) []byte {
-	panic("unimplemented")
+	response := append(request[0:8], ERR_ILLEGAL_FUNCTION)
+	response[7] += 0x80
+	return response
 }
 func ResponseFC03TCP(request []byte, devices map[int]*Device) []byte {
 	tx_id := binary.BigEndian.Uint16(request[0:2])
