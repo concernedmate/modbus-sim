@@ -6,55 +6,57 @@ import (
 	"encoding/hex"
 	"fmt"
 	"modbus-sim/modbus"
+	"slices"
 	"strings"
 	"time"
 
 	g "github.com/AllenDang/giu"
 )
 
-type Window interface {
-	Build()
-}
-
 type WindowModsim struct {
 	title string
 	host  string
 
-	stop_serve context.CancelFunc
+	cancel context.CancelFunc
 
 	selected_device int
 	devices         []modbus.Device
 	log_msg         []string
 }
 
-func (window *WindowModsim) toggle_server() {
-	if window.stop_serve != nil {
-		window.stop_serve()
-		window.stop_serve = nil
-	} else {
-		ctx, cancel := context.WithCancel(context.Background())
-		window.stop_serve = cancel
+func (window *WindowModsim) start() {
+	ctx, cancel := context.WithCancel(context.Background())
+	window.cancel = cancel
 
-		go func() {
-			if err := modbus.ServeTCP(ctx, window.host, window.devices); err != nil {
-				window.log("failed to start server: %v", err)
-				window.toggle_server()
-			}
-		}()
+	go func() {
+		window.log("server started")
+		if err := modbus.ServeTCP(ctx, window.host, window.devices); err != nil {
+			window.log("failed to start server: %v", err)
+			window.stop()
+		}
+		window.log("server stopped")
+	}()
+}
+func (window *WindowModsim) stop() {
+	if window.cancel == nil {
+		return
 	}
-
+	window.cancel()
+	window.cancel = nil
 }
 func (window *WindowModsim) log(format string, a ...any) {
-	msg := fmt.Sprintf("[%s] %s", time.Now().Format(time.TimeOnly), fmt.Sprintf(format, a))
+	msg := fmt.Sprintf("[%s] %s", time.Now().Format(time.TimeOnly), fmt.Sprintf(format, a...))
+	slices.Reverse(window.log_msg)
 	if len(window.log_msg) < 100 {
 		window.log_msg = append(window.log_msg, msg)
 	} else {
 		copy(window.log_msg, window.log_msg[1:])
 		window.log_msg[len(window.log_msg)-1] = msg
 	}
+	slices.Reverse(window.log_msg)
 }
 func (window *WindowModsim) Build() {
-	g.Window(window.title).Layout(
+	g.Window(window.title).Size(g.GetAvailableRegion()).Layout(
 		// config
 		g.Custom(func() {
 			g.Table().Rows(
@@ -67,8 +69,8 @@ func (window *WindowModsim) Build() {
 		g.Custom(func() {
 			w, _ := g.GetAvailableRegion()
 			g.Row(
-				g.Button("START SERVER").Size(w/2, 32).OnClick(window.toggle_server),
-				g.Button("CLOSE").Size(w/2, 32),
+				g.Button("START SERVER").Size(w/2, 32).OnClick(window.start).Disabled(window.cancel != nil),
+				g.Button("STOP SERVER").Size(w/2, 32).OnClick(window.stop).Disabled(window.cancel == nil),
 			).Build()
 		}),
 
@@ -76,22 +78,18 @@ func (window *WindowModsim) Build() {
 		g.Custom(func() {
 			_, h := g.GetAvailableRegion()
 			var items = make([]*g.TabItemWidget, 0, len(window.devices))
-			var bytes = make([]byte, 2)
 			var bytes_builder strings.Builder
 
 			for idx := range len(window.devices) {
-				rows := make([]*g.TableRowWidget, 0, len(window.devices[idx].HoldingRegisters))
+				rows := make([]*g.TableRowWidget, 0, len(window.devices[idx].HoldingRegisters)+1)
 
 				// headers
 				rows = append(rows, g.TableRow(g.Label("Address"), g.Label("Value"), g.Label("Binary")).Flags(g.TableRowFlagsHeaders))
 				// values
 				for idx, val := range window.devices[idx].HoldingRegisters {
-					// make binary version
-					binary.BigEndian.PutUint16(bytes, val)
-
 					// build representation
 					bytes_builder.Reset()
-					for idx, val := range hex.EncodeToString(bytes) {
+					for idx, val := range hex.EncodeToString(val[:]) {
 						if idx != 0 && idx%2 == 0 {
 							bytes_builder.WriteRune(' ')
 						}
@@ -101,7 +99,7 @@ func (window *WindowModsim) Build() {
 					// insert row
 					rows = append(rows, g.TableRow(
 						g.Labelf("%d", 400001+idx),
-						g.Labelf("%04d", val),
+						g.Labelf("%04d", binary.BigEndian.Uint16(val[:])),
 						g.Labelf("[%s]\n", bytes_builder.String()),
 					))
 				}
@@ -122,7 +120,7 @@ func (window *WindowModsim) Build() {
 	)
 }
 
-func Tes(title string) WindowModsim {
+func CreateWindowModsim(title string) WindowModsim {
 	return WindowModsim{
 		title: title,
 		host:  "127.0.0.1:3000",

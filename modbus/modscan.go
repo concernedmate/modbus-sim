@@ -12,15 +12,46 @@ import (
 	"time"
 )
 
-func ConnectTCP(ctx context.Context, function byte, addr string, slave_id uint8, start_register int, qty uint16) error {
+func ConnectTCP(ctx context.Context, fc byte, host string, slave_id uint8, register int, qty uint16, callback func(map[int][]byte, error)) error {
+	if callback == nil {
+		callback = func(result map[int][]byte, err error) {
+			fmt.Print("\033c")
+			fmt.Printf("Connection\t: %s\tStart Register\t: %d\n", host, register)
+			fmt.Printf("Device ID\t: %d\t\t\tCount\t\t: %d\n", slave_id, qty)
+			fmt.Printf("Function Code\t: 0x%02d\n", fc)
+
+			if err != nil {
+				fmt.Printf("[ERROR] %v\n", err)
+				return
+			}
+
+			for idx := range qty {
+				register := register + int(idx)
+				switch fc {
+				case READ_COIL:
+					fmt.Printf("%d: %t\n", register, result[register][0] == 1)
+				case READ_HOLDING_REGISTERS:
+					var bytes strings.Builder
+					for idx, val := range hex.EncodeToString(result[register]) {
+						if idx != 0 && idx%2 == 0 {
+							bytes.WriteRune(' ')
+						}
+						bytes.WriteRune(val)
+					}
+
+					fmt.Printf("%d: %5d [%s]\n", register, binary.BigEndian.Uint16(result[register]), bytes.String())
+				}
+			}
+		}
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	_, err := netip.ParseAddrPort(addr)
+	_, err := netip.ParseAddrPort(host)
 	if err != nil {
 		return fmt.Errorf("failed to parse address: %v", err)
 	}
-	register_addr, err := ParseRegisterAddr(start_register)
+	register_addr, err := ParseRegisterAddr(register)
 	if err != nil {
 		return fmt.Errorf("failed to parse register: %v", err)
 	}
@@ -33,7 +64,7 @@ func ConnectTCP(ctx context.Context, function byte, addr string, slave_id uint8,
 			Count:    1,
 		},
 	}
-	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	conn, err := dialer.DialContext(ctx, "tcp", host)
 	if err != nil {
 		return fmt.Errorf("failed to connect: %v", err)
 	}
@@ -48,13 +79,8 @@ func ConnectTCP(ctx context.Context, function byte, addr string, slave_id uint8,
 		case <-ctx.Done():
 			return nil
 		case <-timer.C:
-			fmt.Print("\033c")
-			fmt.Printf("Connection\t: %s\tStart Register\t: %d\n", addr, start_register)
-			fmt.Printf("Device ID\t: %d\t\t\tCount\t\t: %d\n", slave_id, qty)
-			fmt.Printf("Function Code\t: 0x%02d\n", function)
-
 			var request []byte
-			switch function {
+			switch fc {
 			case READ_COIL:
 				request = RequestFrameFC01TCP(tx_id, slave_id, register_addr, qty)
 			case READ_HOLDING_REGISTERS:
@@ -73,34 +99,13 @@ func ConnectTCP(ctx context.Context, function byte, addr string, slave_id uint8,
 			}
 
 			var result map[int][]byte
-			switch function {
+			switch fc {
 			case READ_COIL:
-				result, err = ParseResponseFC01TCP(response, start_register, qty)
+				result, err = ParseResponseFC01TCP(response, register, qty)
 			case READ_HOLDING_REGISTERS:
-				result, err = ParseResponseFC03TCP(response, start_register, qty)
+				result, err = ParseResponseFC03TCP(response, register, qty)
 			}
-			if err != nil {
-				fmt.Printf("[ERROR] %v\n", err)
-			} else {
-				for idx := range qty {
-					register := start_register + int(idx)
-					switch function {
-					case READ_COIL:
-						fmt.Printf("%d: %t\n", register, result[register][0] == 1)
-					case READ_HOLDING_REGISTERS:
-
-						var bytes strings.Builder
-						for idx, val := range hex.EncodeToString(result[register]) {
-							if idx != 0 && idx%2 == 0 {
-								bytes.WriteRune(' ')
-							}
-							bytes.WriteRune(val)
-						}
-
-						fmt.Printf("%d: %5d [%s]\n", register, binary.BigEndian.Uint16(result[register]), bytes.String())
-					}
-				}
-			}
+			callback(result, err)
 
 			tx_id++
 			timer.Reset(time.Second)

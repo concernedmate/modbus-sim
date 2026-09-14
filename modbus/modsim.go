@@ -3,6 +3,7 @@ package modbus
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -15,15 +16,28 @@ type Device struct {
 	mutex sync.Mutex
 
 	SlaveID          int
-	HoldingRegisters []uint16
+	HoldingRegisters [][2]byte
 	CoilRegisters    []bool
 }
 
-func NewModbusDevice(slave_id int, holding_registers []uint16, coil_registers []bool) Device {
+func NewModbusDevice[T [2]byte | uint16](slave_id int, holding_registers []T, coil_registers []bool) Device {
+	var registers = make([][2]byte, 0, len(holding_registers))
+	switch t := any(holding_registers).(type) {
+	case [][2]byte:
+		for _, val := range t {
+			registers = append(registers, val)
+		}
+	case []uint16:
+		var bytes = make([]byte, 2)
+		for _, val := range t {
+			binary.BigEndian.PutUint16(bytes, val)
+			registers = append(registers, [2]byte{bytes[0], bytes[1]})
+		}
+	}
 	return Device{
 		mutex:            sync.Mutex{},
 		SlaveID:          slave_id,
-		HoldingRegisters: holding_registers,
+		HoldingRegisters: registers,
 		CoilRegisters:    coil_registers,
 	}
 }
@@ -50,6 +64,9 @@ func ServeTCP(ctx context.Context, addr string, devices []Device) error {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return nil
+			}
 			fmt.Printf("[ERROR] failed to accept conn: %v\n", err)
 			continue
 		}
@@ -147,7 +164,8 @@ func ResponseFC03TCP(request []byte, devices map[int]*Device) []byte {
 	var idx uint16
 	for addr := start_addr; addr <= max_addr; addr++ {
 		idx = (addr - start_addr) * 2
-		binary.BigEndian.PutUint16(response[(9+idx):], device.HoldingRegisters[addr])
+		response[(9 + idx)] = device.HoldingRegisters[addr][0]
+		response[(9+idx)+1] = device.HoldingRegisters[addr][1]
 	}
 
 	return response

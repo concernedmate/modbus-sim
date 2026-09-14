@@ -47,7 +47,7 @@ func args() {
 		if err != nil {
 			log.Fatal(fmt.Errorf("invalid qty: %v", err))
 		}
-		if err := modbus.ConnectTCP(context.Background(), modbus.READ_HOLDING_REGISTERS, addr, uint8(slave_id), register, uint16(qty)); err != nil {
+		if err := modbus.ConnectTCP(context.Background(), modbus.READ_HOLDING_REGISTERS, addr, uint8(slave_id), register, uint16(qty), nil); err != nil {
 			log.Fatal(err)
 		}
 	}
@@ -60,22 +60,24 @@ type AppState struct {
 var app_state AppState
 
 func init() {
-	app_state.windows = append(app_state.windows, new(window.Tes("tes1")))
-	app_state.windows = append(app_state.windows, new(window.Tes("tes2")))
+	app_state.windows = append(app_state.windows, new(window.CreateWindowModscan("modbus scanner")))
+	app_state.windows = append(app_state.windows, new(window.CreateWindowModsim("modbus simulator")))
 }
 func loop() {
 	g.SingleWindowWithMenuBar().Layout(
 		// menu bar
 		g.MenuBar().Layout(
-			g.MenuItem("File"),
 			g.MenuItem("About"),
 		),
+
+		g.Custom(func() {
+			for idx := range app_state.windows {
+				app_state.windows[idx].Build()
+			}
+		}),
 	)
-	for idx := range app_state.windows {
-		app_state.windows[idx].Build()
-	}
 }
 func main() {
-	w := g.NewMasterWindow("Modbus Simulator", 800, 600, 0)
+	w := g.NewMasterWindow("Modbus", 1280, 720, g.MasterWindowFlagsTransparent)
 	w.Run(loop)
 }
