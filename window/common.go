@@ -1,5 +1,8 @@
 package window
 
+import g "github.com/AllenDang/giu"
+
 type Window interface {
-	Build()
+	Title() string
+	Layout() []g.Widget
 }

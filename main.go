@@ -24,8 +24,8 @@ func (data *AppState) toggle_about() {
 var APP_STATE AppState
 
 func init() {
-	APP_STATE.windows = append(APP_STATE.windows, new(window.CreateWindowModscan("modbus scanner")))
-	APP_STATE.windows = append(APP_STATE.windows, new(window.CreateWindowModsim("modbus simulator")))
+	APP_STATE.windows = append(APP_STATE.windows, new(window.CreateWindowModscan("scanner")))
+	APP_STATE.windows = append(APP_STATE.windows, new(window.CreateWindowModsim("simulator")))
 }
 func args() {
 	if len(os.Args) < 2 {
@@ -76,9 +76,11 @@ func loop() {
 		),
 
 		g.Custom(func() {
-			for idx := range APP_STATE.windows {
-				APP_STATE.windows[idx].Build()
+			tabs := make([]*g.TabItemWidget, 0, len(APP_STATE.windows))
+			for _, window := range APP_STATE.windows {
+				tabs = append(tabs, g.TabItem(window.Title()).Layout(window.Layout()...))
 			}
+			g.TabBar().TabItems(tabs...).Build()
 		}),
 	)
 	if APP_STATE.is_about_shown {

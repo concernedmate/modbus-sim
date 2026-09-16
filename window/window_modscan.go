@@ -111,8 +111,12 @@ func (window *WindowModscan) log(format string, a ...any) {
 	}
 	slices.Reverse(window.log_msg)
 }
-func (window *WindowModscan) Build() {
-	g.Window(window.title).Layout(
+
+func (window *WindowModscan) Title() string {
+	return window.title
+}
+func (window *WindowModscan) Layout() []g.Widget {
+	return []g.Widget{
 		// config
 		g.Custom(func() {
 			selected_fc := window.modbus_function_code
@@ -163,7 +167,7 @@ func (window *WindowModscan) Build() {
 		// history log
 		g.Label("LOG:"),
 		g.ListBox(window.log_msg),
-	)
+	}
 }
 
 func CreateWindowModscan(title string) WindowModscan {

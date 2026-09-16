@@ -55,8 +55,12 @@ func (window *WindowModsim) log(format string, a ...any) {
 	}
 	slices.Reverse(window.log_msg)
 }
-func (window *WindowModsim) Build() {
-	g.Window(window.title).Layout(
+
+func (window *WindowModsim) Title() string {
+	return window.title
+}
+func (window *WindowModsim) Layout() []g.Widget {
+	return []g.Widget{
 		// config
 		g.Custom(func() {
 			g.Table().Rows(
@@ -117,7 +121,7 @@ func (window *WindowModsim) Build() {
 		// history log
 		g.Label("LOG:"),
 		g.ListBox(window.log_msg),
-	)
+	}
 }
 
 func CreateWindowModsim(title string) WindowModsim {
