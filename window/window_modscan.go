@@ -23,6 +23,7 @@ type WindowModscan struct {
 	modbus_slave_id      int32
 	modbus_register      int32
 	modbus_quantity      int32
+	modbus_protocol      string
 	modbus_rows          []*g.TableRowWidget
 
 	cancel  context.CancelFunc
@@ -79,12 +80,13 @@ func (window *WindowModscan) start() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	window.cancel = cancel
+	window.modbus_rows = nil
 
 	go func() {
 		window.log("connection started")
 		if err := modbus.ConnectTCP(
 			ctx, byte(window.modbus_function_code), window.modbus_host_addr, uint8(window.modbus_slave_id),
-			int(window.modbus_register), uint16(window.modbus_quantity),
+			int(window.modbus_register), uint16(window.modbus_quantity), window.modbus_protocol,
 			window.callback,
 		); err != nil {
 			window.log("failed to connect: %v", err)
@@ -120,6 +122,7 @@ func (window *WindowModscan) Layout() []g.Widget {
 		// config
 		g.Custom(func() {
 			selected_fc := window.modbus_function_code
+			selected_pr := window.modbus_protocol
 			g.Table().Rows(
 				g.TableRow(g.Label("Modbus Host"), g.InputText(&window.modbus_host_addr)),
 				g.TableRow(g.Label("Slave ID"), g.InputInt(&window.modbus_slave_id)),
@@ -143,6 +146,16 @@ func (window *WindowModscan) Layout() []g.Widget {
 				g.TableRow(g.Dummy(0, 0),
 					g.Checkbox("READ_INPUT_REGISTERS", new(selected_fc == modbus.READ_INPUT_REGISTERS)).OnChange(
 						func() { window.modbus_function_code = modbus.READ_INPUT_REGISTERS },
+					),
+				),
+				g.TableRow(g.Label("Protocol"),
+					g.Checkbox("RTU", new(selected_pr == modbus.RTU)).OnChange(
+						func() { window.modbus_protocol = modbus.RTU },
+					),
+				),
+				g.TableRow(g.Dummy(0, 0),
+					g.Checkbox("TCP", new(selected_pr == modbus.TCP)).OnChange(
+						func() { window.modbus_protocol = modbus.TCP },
 					),
 				),
 			).Flags(g.TableFlagsNoClip | g.TableFlagsBorders).Build()
@@ -179,5 +192,7 @@ func CreateWindowModscan(title string) WindowModscan {
 		modbus_register:      400001,
 		modbus_quantity:      3,
 		log_msg:              make([]string, 0, 100),
+		modbus_protocol:      modbus.TCP,
+		modbus_rows:          []*g.TableRowWidget{},
 	}
 }

@@ -27,6 +27,12 @@ const (
 	ERR_GATEWAY_TARGET_DEVICE_FAILED_TO_RESPOND = 0x11
 )
 
+// protocol
+const (
+	RTU = "RTU"
+	TCP = "TCP"
+)
+
 var modbus_exception = map[int]string{
 	ERR_ILLEGAL_FUNCTION:                        "ILLEGAL_FUNCTION",
 	ERR_ILLEGAL_DATA_ADDRESS:                    "ILLEGAL_DATA_ADDRESS",

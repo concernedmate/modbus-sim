@@ -62,7 +62,7 @@ func args() {
 		if err != nil {
 			log.Fatal(fmt.Errorf("invalid qty: %v", err))
 		}
-		if err := modbus.ConnectTCP(context.Background(), modbus.READ_HOLDING_REGISTERS, addr, uint8(slave_id), register, uint16(qty), nil); err != nil {
+		if err := modbus.ConnectTCP(context.Background(), modbus.READ_HOLDING_REGISTERS, addr, uint8(slave_id), register, uint16(qty), modbus.TCP, nil); err != nil {
 			log.Fatal(err)
 		}
 	}
