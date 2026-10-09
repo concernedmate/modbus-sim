@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"go.bug.st/serial"
 )
 
 func ConnectTCP(ctx context.Context, fc byte, host string, slave_id uint8, register int, qty uint16, protocol string, callback func(map[int][]byte, error)) error {
@@ -31,6 +33,8 @@ func ConnectTCP(ctx context.Context, fc byte, host string, slave_id uint8, regis
 				case READ_COIL:
 					fmt.Printf("%d: %t\n", register, result[register][0] == 1)
 				case READ_HOLDING_REGISTERS:
+					fallthrough
+				case READ_INPUT_REGISTERS:
 					var bytes strings.Builder
 					for idx, val := range hex.EncodeToString(result[register]) {
 						if idx != 0 && idx%2 == 0 {
@@ -93,6 +97,12 @@ func ConnectTCP(ctx context.Context, fc byte, host string, slave_id uint8, regis
 				} else {
 					request = RequestFrameFC03RTU(slave_id, register_addr, qty)
 				}
+			case READ_INPUT_REGISTERS:
+				if protocol == TCP {
+					request = RequestFrameFC04TCP(tx_id, slave_id, register_addr, qty)
+				} else {
+					request = RequestFrameFC04RTU(slave_id, register_addr, qty)
+				}
 			}
 			if _, err := conn.Write(request); err != nil {
 				return err
@@ -123,10 +133,111 @@ func ConnectTCP(ctx context.Context, fc byte, host string, slave_id uint8, regis
 				} else {
 					result, err = ParseResponseFC03RTU(response, register, qty)
 				}
+			case READ_INPUT_REGISTERS:
+				if protocol == TCP {
+					result, err = ParseResponseFC04TCP(response, register, qty)
+				} else {
+					result, err = ParseResponseFC04RTU(response, register, qty)
+				}
 			}
 			callback(result, err)
 
 			tx_id++
+			timer.Reset(time.Second)
+		}
+	}
+}
+func ConnectSerial(ctx context.Context, fc byte, port_name string, baud_rate int, slave_id uint8, register int, qty uint16, callback func(map[int][]byte, error)) error {
+	if callback == nil {
+		callback = func(result map[int][]byte, err error) {
+			fmt.Print("\033c")
+			fmt.Printf("Connection\t: %s\tStart Register\t: %d\n", port_name, register)
+			fmt.Printf("Device ID\t: %d\t\t\tCount\t\t: %d\n", slave_id, qty)
+			fmt.Printf("Function Code\t: 0x%02d\n", fc)
+
+			if err != nil {
+				fmt.Printf("[ERROR] %v\n", err)
+				return
+			}
+
+			for idx := range qty {
+				register := register + int(idx)
+				switch fc {
+				case READ_COIL:
+					fmt.Printf("%d: %t\n", register, result[register][0] == 1)
+				case READ_HOLDING_REGISTERS:
+					fallthrough
+				case READ_INPUT_REGISTERS:
+					var bytes strings.Builder
+					for idx, val := range hex.EncodeToString(result[register]) {
+						if idx != 0 && idx%2 == 0 {
+							bytes.WriteRune(' ')
+						}
+						bytes.WriteRune(val)
+					}
+
+					fmt.Printf("%d: %5d [%s]\n", register, binary.BigEndian.Uint16(result[register]), bytes.String())
+				}
+			}
+		}
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	register_addr, err := ParseRegisterAddr(register)
+	if err != nil {
+		return fmt.Errorf("failed to parse register: %v", err)
+	}
+
+	mode := &serial.Mode{
+		BaudRate: baud_rate,
+		DataBits: 8,                 // TODO make customizable
+		Parity:   serial.NoParity,   // TODO make customizable
+		StopBits: serial.OneStopBit, // TODO make customizable
+	}
+	conn, err := serial.Open(port_name, mode)
+	if err != nil {
+		return fmt.Errorf("failed to open port: %v", err)
+	}
+	defer conn.Close()
+
+	var timer = time.NewTimer(time.Second)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-timer.C:
+			var request []byte
+			switch fc {
+			case READ_COIL:
+				request = RequestFrameFC01RTU(slave_id, register_addr, qty)
+			case READ_HOLDING_REGISTERS:
+				request = RequestFrameFC03RTU(slave_id, register_addr, qty)
+			case READ_INPUT_REGISTERS:
+				request = RequestFrameFC04RTU(slave_id, register_addr, qty)
+			}
+			if _, err := conn.Write(request); err != nil {
+				return err
+			}
+			// 7 tcp header, 2 modbus header, 2 bytes per register
+			var response = make([]byte, 7+2+(2*qty))
+			if _, err := conn.Read(response); err != nil {
+				return err
+			}
+
+			var result map[int][]byte
+			switch fc {
+			case READ_COIL:
+				result, err = ParseResponseFC01RTU(response, register, qty)
+			case READ_HOLDING_REGISTERS:
+				result, err = ParseResponseFC03RTU(response, register, qty)
+			case READ_INPUT_REGISTERS:
+				result, err = ParseResponseFC04RTU(response, register, qty)
+			}
+			callback(result, err)
+
 			timer.Reset(time.Second)
 		}
 	}
@@ -147,6 +258,18 @@ func ParseResponseFC01TCP(response []byte, start_addr int, qty uint16) (map[int]
 }
 func ParseResponseFC03TCP(response []byte, start_addr int, qty uint16) (map[int][]byte, error) {
 	if READ_HOLDING_REGISTERS != response[7] {
+		return nil, fmt.Errorf("exception: %s", modbus_exception[int(response[8])])
+	}
+
+	var result = make(map[int][]byte, qty)
+	for idx := range qty {
+		result[start_addr+int(idx)] = response[(9 + (idx * 2)):][:2]
+	}
+
+	return result, nil
+}
+func ParseResponseFC04TCP(response []byte, start_addr int, qty uint16) (map[int][]byte, error) {
+	if READ_INPUT_REGISTERS != response[7] {
 		return nil, fmt.Errorf("exception: %s", modbus_exception[int(response[8])])
 	}
 
@@ -194,6 +317,24 @@ func ParseResponseFC03RTU(response []byte, start_addr int, qty uint16) (map[int]
 
 	return result, nil
 }
+func ParseResponseFC04RTU(response []byte, start_addr int, qty uint16) (map[int][]byte, error) {
+	if READ_INPUT_REGISTERS != response[1] {
+		return nil, fmt.Errorf("exception: %s", modbus_exception[int(response[2])])
+	}
+	if len(response) < 2 {
+		return nil, fmt.Errorf("exception: invalid fc04 rtu response")
+	}
+	if calculateCRCFast(response[:len(response)-2]) != binary.LittleEndian.Uint16(response[len(response)-2:]) {
+		return nil, fmt.Errorf("exception: invalid checksum")
+	}
+
+	var result = make(map[int][]byte, qty)
+	for idx := range qty {
+		result[start_addr+int(idx)] = response[(3 + (idx * 2)):][:2]
+	}
+
+	return result, nil
+}
 
 func RequestFrameFC01TCP(tx_id uint16, slave_id uint8, start_addr uint16, qty uint16) []byte {
 	req := make([]byte, 12)
@@ -217,6 +358,17 @@ func RequestFrameFC03TCP(tx_id uint16, slave_id uint8, start_addr uint16, qty ui
 	binary.BigEndian.PutUint16(req[10:], qty)
 	return req
 }
+func RequestFrameFC04TCP(tx_id uint16, slave_id uint8, start_addr uint16, qty uint16) []byte {
+	req := make([]byte, 12)
+	binary.BigEndian.PutUint16(req[0:], tx_id)  // transaction_id
+	binary.BigEndian.PutUint16(req[2:], 0x0000) // protocol_id
+	binary.BigEndian.PutUint16(req[4:], 6)      // length
+	req[6] = slave_id
+	req[7] = READ_INPUT_REGISTERS
+	binary.BigEndian.PutUint16(req[8:], start_addr)
+	binary.BigEndian.PutUint16(req[10:], qty)
+	return req
+}
 func RequestFrameFC01RTU(slave_id uint8, start_addr, qty uint16) []byte {
 	req := make([]byte, 8)
 	req[0] = slave_id
@@ -230,6 +382,15 @@ func RequestFrameFC03RTU(slave_id uint8, start_addr, qty uint16) []byte {
 	req := make([]byte, 8)
 	req[0] = slave_id
 	req[1] = READ_HOLDING_REGISTERS
+	binary.BigEndian.PutUint16(req[2:4], start_addr)
+	binary.BigEndian.PutUint16(req[4:6], qty)
+	binary.LittleEndian.PutUint16(req[6:8], calculateCRCFast(req[:6]))
+	return req
+}
+func RequestFrameFC04RTU(slave_id uint8, start_addr, qty uint16) []byte {
+	req := make([]byte, 8)
+	req[0] = slave_id
+	req[1] = READ_INPUT_REGISTERS
 	binary.BigEndian.PutUint16(req[2:4], start_addr)
 	binary.BigEndian.PutUint16(req[4:6], qty)
 	binary.LittleEndian.PutUint16(req[6:8], calculateCRCFast(req[:6]))

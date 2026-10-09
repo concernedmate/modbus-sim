@@ -13,30 +13,65 @@ import (
 	"time"
 
 	g "github.com/AllenDang/giu"
+	"go.bug.st/serial"
 )
+
+const (
+	CONN_TYPE_TCP    = "TCP"
+	CONN_TYPE_SERIAL = "SERIAL"
+)
+
+var CONN_TYPES = []string{
+	CONN_TYPE_TCP,
+	CONN_TYPE_SERIAL,
+}
+var PROTOCOL_TYPES = []string{
+	modbus.TCP,
+	modbus.RTU,
+}
+var FUNCTION_CODES_STR = []string{
+	"READ_COIL",
+	"READ_DISCRETE_INPUT",
+	"READ_HOLDING_REGISTERS",
+	"READ_INPUT_REGISTERS",
+}
+var FUNCTION_CODES_INT = []int{
+	modbus.READ_COIL,
+	modbus.READ_DISCRETE_INPUT,
+	modbus.READ_HOLDING_REGISTERS,
+	modbus.READ_INPUT_REGISTERS,
+}
 
 type WindowModscan struct {
 	title string
 
-	modbus_function_code int32
-	modbus_host_addr     string
-	modbus_slave_id      int32
-	modbus_register      int32
-	modbus_quantity      int32
-	modbus_protocol      string
-	modbus_rows          []*g.TableRowWidget
+	function_code int32
+
+	connection string // TCP or SERIAL
+
+	host_addr      string   // tcp host:port
+	available_port []string // serial device
+	selected_port  int32
+	baud_rate      int32
+
+	slave_id int32
+	register int32
+	quantity int32
+	protocol string
+
+	rows []*g.TableRowWidget
 
 	cancel  context.CancelFunc
 	log_msg []string
 }
 
-func (window *WindowModscan) callback(result map[int][]byte, err error) {
+func (w *WindowModscan) callback(result map[int][]byte, err error) {
 	if err != nil {
-		window.log("%v", err)
+		w.log("%v", err)
 		return
 	}
 
-	rows := make([]*g.TableRowWidget, 0, window.modbus_quantity+1)
+	rows := make([]*g.TableRowWidget, 0, w.quantity+1)
 	bytes_builder := strings.Builder{}
 
 	// headers
@@ -62,104 +97,174 @@ func (window *WindowModscan) callback(result map[int][]byte, err error) {
 		))
 	}
 
-	window.modbus_rows = rows
+	w.rows = rows
 }
-func (window *WindowModscan) start() {
-	if window.modbus_slave_id < 0 || window.modbus_slave_id > math.MaxUint8 {
-		window.log("invalid slave_id value (must be between 0-255)")
+func (w *WindowModscan) start() {
+	if w.slave_id < 0 || w.slave_id > math.MaxUint8 {
+		w.log("invalid slave_id value (must be between 0-255)")
 		return
 	}
-	if window.modbus_quantity < 0 || window.modbus_quantity > math.MaxUint16 {
-		window.log("invalid quantity value (must be between 0-65535)")
+	if w.quantity < 0 || w.quantity > math.MaxUint16 {
+		w.log("invalid quantity value (must be between 0-65535)")
 		return
 	}
-	if _, err := modbus.ParseRegisterAddr(int(window.modbus_register)); err != nil {
-		window.log("invalid start_register value: %v", err)
+	if _, err := modbus.ParseRegisterAddr(int(w.register)); err != nil {
+		w.log("invalid start_register value: %v", err)
 		return
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	window.cancel = cancel
-	window.modbus_rows = nil
+	w.cancel = cancel
+	if w.rows == nil {
+		w.rows = make([]*g.TableRowWidget, 0, w.quantity)
+	} else {
+		w.rows = w.rows[:0]
+	}
 
-	go func() {
-		window.log("connection started")
-		if err := modbus.ConnectTCP(
-			ctx, byte(window.modbus_function_code), window.modbus_host_addr, uint8(window.modbus_slave_id),
-			int(window.modbus_register), uint16(window.modbus_quantity), window.modbus_protocol,
-			window.callback,
-		); err != nil {
-			window.log("failed to connect: %v", err)
-			window.stop()
-		}
-		window.log("connection closed")
-	}()
+	if w.connection == CONN_TYPE_TCP {
+		go func() {
+			w.log("connection started")
+			if err := modbus.ConnectTCP(
+				ctx,
+				byte(w.function_code),
+				w.host_addr,
+				uint8(w.slave_id),
+				int(w.register),
+				uint16(w.quantity),
+				w.protocol,
+				w.callback,
+			); err != nil {
+				w.log("failed to connect: %v", err)
+				w.stop()
+			}
+			w.log("connection closed")
+		}()
+	} else {
+		go func() {
+			if int(w.selected_port) >= len(w.available_port) {
+				w.log("no serial device detected")
+				w.stop()
+				return
+			}
+
+			w.log("connection started")
+			if err := modbus.ConnectSerial(
+				ctx, byte(w.function_code),
+				w.available_port[w.selected_port],
+				int(w.baud_rate),
+				uint8(w.slave_id),
+				int(w.register),
+				uint16(w.quantity),
+				w.callback,
+			); err != nil {
+				w.log("failed to connect: %v", err)
+				w.stop()
+			}
+			w.log("connection closed")
+		}()
+	}
 }
-func (window *WindowModscan) stop() {
-	if window.cancel == nil {
+func (w *WindowModscan) stop() {
+	if w.cancel == nil {
 		return
 	}
-	window.cancel()
-	window.cancel = nil
+	w.cancel()
+	w.cancel = nil
 }
-func (window *WindowModscan) log(format string, a ...any) {
+func (w *WindowModscan) log(format string, a ...any) {
 	msg := fmt.Sprintf("[%s] %s", time.Now().Format(time.TimeOnly), fmt.Sprintf(format, a...))
-	slices.Reverse(window.log_msg)
-	if len(window.log_msg) < 100 {
-		window.log_msg = append(window.log_msg, msg)
+	slices.Reverse(w.log_msg)
+	if len(w.log_msg) < 100 {
+		w.log_msg = append(w.log_msg, msg)
 	} else {
-		copy(window.log_msg, window.log_msg[1:])
-		window.log_msg[len(window.log_msg)-1] = msg
+		copy(w.log_msg, w.log_msg[1:])
+		w.log_msg[len(w.log_msg)-1] = msg
 	}
-	slices.Reverse(window.log_msg)
+	slices.Reverse(w.log_msg)
 }
 
-func (window *WindowModscan) Title() string {
-	return window.title
+func (w *WindowModscan) Title() string {
+	return w.title
 }
 func (window *WindowModscan) Layout() []g.Widget {
 	return []g.Widget{
 		// config
-		g.Custom(func() {
-			selected_fc := window.modbus_function_code
-			selected_pr := window.modbus_protocol
-			g.Table().Rows(
-				g.TableRow(g.Label("Modbus Host"), g.InputText(&window.modbus_host_addr)),
-				g.TableRow(g.Label("Slave ID"), g.InputInt(&window.modbus_slave_id)),
-				g.TableRow(g.Label("Start Register"), g.InputInt(&window.modbus_register)),
-				g.TableRow(g.Label("Read Quantity"), g.InputInt(&window.modbus_quantity)),
-				g.TableRow(g.Label("Function Code"),
-					g.Checkbox("READ_COIL", new(selected_fc == modbus.READ_COIL)).OnChange(
-						func() { window.modbus_function_code = modbus.READ_COIL },
+		g.Style().SetDisabled(window.cancel != nil).To(
+			g.Custom(func() {
+				var rows = make([]*g.TableRowWidget, 0, 10)
+
+				switch window.connection {
+				case CONN_TYPE_SERIAL:
+					var preview = ""
+					if len(window.available_port) > int(window.selected_port) {
+						preview = window.available_port[window.selected_port]
+					}
+					rows = append(rows,
+						g.TableRow(g.Label("Device"), g.Combo("USB", preview, window.available_port, &window.selected_port)),
+						g.TableRow(g.Label("Baud Rate"), g.InputInt(&window.baud_rate)),
+					)
+				case CONN_TYPE_TCP:
+					rows = append(rows,
+						g.TableRow(g.Label("Modbus Host"), g.InputText(&window.host_addr)),
+						g.TableRow(g.Dummy(0, 0), g.Style().SetDisabled(true).To(g.InputText(new(string)))),
+					)
+				}
+
+				rows = append(rows,
+					g.TableRow(g.Label("Slave ID"), g.InputInt(&window.slave_id)),
+					g.TableRow(g.Label("Start Register"), g.InputInt(&window.register)),
+					g.TableRow(g.Label("Read Quantity"), g.InputInt(&window.quantity)),
+					g.TableRow(g.Label("Function Code"),
+						g.Custom(func() {
+							var selected_fc_type int32 = 0
+							var preview = ""
+							if i := slices.Index(FUNCTION_CODES_INT, int(window.function_code)); i != -1 {
+								preview = FUNCTION_CODES_STR[i]
+							}
+							g.Combo("", preview, FUNCTION_CODES_STR, &selected_fc_type).OnChange(func() {
+								window.function_code = int32(FUNCTION_CODES_INT[selected_fc_type])
+							}).Build()
+						}),
 					),
-				),
-				g.TableRow(g.Dummy(0, 0),
-					g.Checkbox("READ_DISCRETE_INPUT", new(selected_fc == modbus.READ_DISCRETE_INPUT)).OnChange(
-						func() { window.modbus_function_code = modbus.READ_DISCRETE_INPUT },
+					g.TableRow(g.Label("Protocol"),
+						g.Style().SetDisabled(window.connection == CONN_TYPE_SERIAL).To(
+							g.Custom(func() {
+								var selected_protocol int32 = 0
+								g.Combo("", window.protocol, PROTOCOL_TYPES, &selected_protocol).OnChange(func() {
+									if window.connection == CONN_TYPE_SERIAL {
+										window.protocol = modbus.RTU
+									} else {
+										window.protocol = PROTOCOL_TYPES[selected_protocol]
+									}
+								}).Build()
+							}),
+						),
 					),
-				),
-				g.TableRow(g.Dummy(0, 0),
-					g.Checkbox("READ_HOLDING_REGISTERS", new(selected_fc == modbus.READ_HOLDING_REGISTERS)).OnChange(
-						func() { window.modbus_function_code = modbus.READ_HOLDING_REGISTERS },
+					g.TableRow(g.Label("Connection"),
+						g.Custom(func() {
+							var selected_conn_type int32 = 0
+							g.Combo("", window.connection, CONN_TYPES, &selected_conn_type).OnChange(func() {
+								switch CONN_TYPES[selected_conn_type] {
+								case CONN_TYPE_SERIAL:
+									ports, err := serial.GetPortsList()
+									if err != nil {
+										window.log("failed to get available com devices: %v", err)
+										return
+									}
+									window.available_port = ports
+									window.connection = CONN_TYPE_SERIAL
+									window.protocol = modbus.RTU
+								case CONN_TYPE_TCP:
+									window.connection = CONN_TYPE_TCP
+								}
+							}).Build()
+						}),
 					),
-				),
-				g.TableRow(g.Dummy(0, 0),
-					g.Checkbox("READ_INPUT_REGISTERS", new(selected_fc == modbus.READ_INPUT_REGISTERS)).OnChange(
-						func() { window.modbus_function_code = modbus.READ_INPUT_REGISTERS },
-					),
-				),
-				g.TableRow(g.Label("Protocol"),
-					g.Checkbox("RTU", new(selected_pr == modbus.RTU)).OnChange(
-						func() { window.modbus_protocol = modbus.RTU },
-					),
-				),
-				g.TableRow(g.Dummy(0, 0),
-					g.Checkbox("TCP", new(selected_pr == modbus.TCP)).OnChange(
-						func() { window.modbus_protocol = modbus.TCP },
-					),
-				),
-			).Flags(g.TableFlagsNoClip | g.TableFlagsBorders).Build()
-		}),
+				)
+
+				g.Table().Rows(rows...).Flags(g.TableFlagsNoClip | g.TableFlagsBorders).Build()
+			}),
+		),
 
 		// buttons
 		g.Custom(func() {
@@ -173,7 +278,7 @@ func (window *WindowModscan) Layout() []g.Widget {
 		// devices
 		g.Custom(func() {
 			_, h := g.GetAvailableRegion()
-			g.TabBar().TabItems(g.TabItemf("SlaveID: %d", window.modbus_slave_id).Layout(g.Table().Size(g.Auto, h/2).Rows(window.modbus_rows...))).Build()
+			g.TabBar().TabItems(g.TabItemf("SlaveID: %d", window.slave_id).Layout(g.Table().Size(g.Auto, h/2).Rows(window.rows...))).Build()
 		}),
 
 		g.Separator(),
@@ -185,14 +290,22 @@ func (window *WindowModscan) Layout() []g.Widget {
 
 func CreateWindowModscan(title string) WindowModscan {
 	return WindowModscan{
-		title:                title,
-		modbus_function_code: modbus.READ_HOLDING_REGISTERS,
-		modbus_host_addr:     "127.0.0.1:3000",
-		modbus_slave_id:      1,
-		modbus_register:      400001,
-		modbus_quantity:      3,
-		log_msg:              make([]string, 0, 100),
-		modbus_protocol:      modbus.TCP,
-		modbus_rows:          []*g.TableRowWidget{},
+		title:         title,
+		function_code: modbus.READ_HOLDING_REGISTERS,
+
+		connection:     CONN_TYPE_TCP,
+		host_addr:      "127.0.0.1:3000",
+		available_port: nil,
+		selected_port:  0,
+		baud_rate:      9600,
+
+		protocol: modbus.TCP,
+
+		slave_id: 1,
+		register: 400001,
+		quantity: 3,
+		log_msg:  make([]string, 0, 100),
+
+		rows: make([]*g.TableRowWidget, 0, 100),
 	}
 }

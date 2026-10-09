@@ -2,7 +2,10 @@ module modbus-sim
 
 go 1.26.4
 
-require github.com/AllenDang/giu v0.15.0
+require (
+	github.com/AllenDang/giu v0.15.0
+	go.bug.st/serial v1.8.0
+)
 
 require (
 	github.com/AllenDang/cimgui-go v1.5.0 // indirect
@@ -16,6 +19,6 @@ require (
 	golang.design/x/hotkey v0.4.1 // indirect
 	golang.design/x/mainthread v0.3.0 // indirect
 	golang.org/x/image v0.41.0 // indirect
-	golang.org/x/sys v0.36.0 // indirect
+	golang.org/x/sys v0.43.0 // indirect
 	gopkg.in/eapache/queue.v1 v1.1.0 // indirect
 )
