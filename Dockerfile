@@ -1,5 +1,5 @@
 # 1st stage build go binary
-FROM golang:1.26.4
+FROM golang:1.26.10
 
 WORKDIR /usr/app-be
 

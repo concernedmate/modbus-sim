@@ -157,7 +157,7 @@ func ResponseFC03TCP(request []byte, devices map[int]*Device) []byte {
 	var response = make([]byte, 9+(2*qty))
 	binary.BigEndian.PutUint16(response[0:2], tx_id)
 	binary.BigEndian.PutUint16(response[2:4], protocol_id)
-	binary.BigEndian.PutUint16(response[4:6], 2+(qty*2))
+	binary.BigEndian.PutUint16(response[4:6], 1+1+1+(qty*2)) // slave_id + fc + length + 2 bytes per value
 	response[6] = slave_id
 	response[7] = function_code
 	response[8] = byte(qty) * 2

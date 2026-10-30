@@ -35,7 +35,7 @@ var FUNCTION_CODES_STR = []string{
 	"READ_HOLDING_REGISTERS",
 	"READ_INPUT_REGISTERS",
 }
-var FUNCTION_CODES_INT = []int{
+var FUNCTION_CODES_INT = []uint8{
 	modbus.READ_COIL,
 	modbus.READ_DISCRETE_INPUT,
 	modbus.READ_HOLDING_REGISTERS,
@@ -45,7 +45,7 @@ var FUNCTION_CODES_INT = []int{
 type WindowModscan struct {
 	title string
 
-	function_code int32
+	function_code uint8
 
 	connection string // TCP or SERIAL
 
@@ -124,15 +124,17 @@ func (w *WindowModscan) start() {
 	if w.connection == CONN_TYPE_TCP {
 		go func() {
 			w.log("connection started")
-			if err := modbus.ConnectTCP(
-				ctx,
-				byte(w.function_code),
-				w.host_addr,
-				uint8(w.slave_id),
-				int(w.register),
-				uint16(w.quantity),
-				w.protocol,
-				w.callback,
+
+			if err := modbus.ConnectEthernet(
+				ctx, modbus.ConnectEthernetInput{
+					Host:         w.host_addr,
+					Protocol:     w.protocol,
+					FunctionCode: w.function_code,
+					SlaveID:      uint8(w.slave_id),
+					Register:     int(w.register),
+					Qty:          uint16(w.quantity),
+					Callback:     w.callback,
+				},
 			); err != nil {
 				w.log("failed to connect: %v", err)
 				w.stop()
@@ -149,13 +151,16 @@ func (w *WindowModscan) start() {
 
 			w.log("connection started")
 			if err := modbus.ConnectSerial(
-				ctx, byte(w.function_code),
-				w.available_port[w.selected_port],
-				int(w.baud_rate),
-				uint8(w.slave_id),
-				int(w.register),
-				uint16(w.quantity),
-				w.callback,
+				ctx, modbus.ConnectSerialInput{
+					PortName:     w.available_port[w.selected_port],
+					BaudRate:     int(w.baud_rate),
+					Protocol:     w.protocol,
+					FunctionCode: w.function_code,
+					SlaveID:      uint8(w.slave_id),
+					Register:     int(w.register),
+					Qty:          uint16(w.quantity),
+					Callback:     w.callback,
+				},
 			); err != nil {
 				w.log("failed to connect: %v", err)
 				w.stop()
@@ -218,11 +223,11 @@ func (window *WindowModscan) Layout() []g.Widget {
 						g.Custom(func() {
 							var selected_fc_type int32 = 0
 							var preview = ""
-							if i := slices.Index(FUNCTION_CODES_INT, int(window.function_code)); i != -1 {
+							if i := slices.Index(FUNCTION_CODES_INT, window.function_code); i != -1 {
 								preview = FUNCTION_CODES_STR[i]
 							}
 							g.Combo("", preview, FUNCTION_CODES_STR, &selected_fc_type).OnChange(func() {
-								window.function_code = int32(FUNCTION_CODES_INT[selected_fc_type])
+								window.function_code = FUNCTION_CODES_INT[selected_fc_type]
 							}).Build()
 						}),
 					),

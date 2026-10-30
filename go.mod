@@ -1,6 +1,6 @@
 module modbus-sim
 
-go 1.26.4
+go 1.26.10
 
 require (
 	github.com/AllenDang/giu v0.15.0
